@@ -1,22 +1,25 @@
 graph:
   edge_probability: 0.1
-  min_mid_nodes : 20
-  max_mid_nodes : 50
-  # Note: the start and end subtask (which have a computation time of 0) will no count here.
-  # So if the node number of a graph is 10, it will actually have 12 nodes (10 + 1 start node + 1 end node)
+  min_mid_nodes: 20
+  max_mid_nodes: 50
 
 node:
-  min_exec_time : 30
-  max_exec_time : 600
-  critical_section_portion : 0.60 # The portion of the node's execution time that will belong to critical sections in total
+  min_exec_time: 30
+  max_exec_time: 600
+  critical_section_portion: 0.60
 
 resource:
-  min_number : 2
-  max_number : 8
-
-  total_access_options : # Each resources will be accessed by all tasks in total either 'x' times, where x can be:
+  min_number: 2
+  max_number: 8
+  total_access_options:
     - 5
     - 15
     - 30
     - 50
-  
+
+# New parameters for scheduling and tasks
+scheduling:
+  system_processors: null
+
+tasks:
+  number_of_tasks: 10
