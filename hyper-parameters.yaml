@@ -17,9 +17,9 @@ resource:
     - 30
     - 50
 
-# New parameters for scheduling and tasks
+# Parameters for scheduling and tasks
 scheduling:
-  system_processors: null
+  system_processors: null  # Will be calculated automatically if null
 
 tasks:
   number_of_tasks: 10
