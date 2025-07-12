@@ -2,6 +2,8 @@ graph:
   edge_probability: 0.1
   min_mid_nodes: 20
   max_mid_nodes: 50
+  number_of_tasks: 4
+
 
 node:
   min_exec_time: 30
@@ -17,9 +19,5 @@ resource:
     - 30
     - 50
 
-# New parameters for scheduling and tasks
-scheduling:
-  system_processors: null
-
-tasks:
-  number_of_tasks: 10
+cpu:
+  utilization_norm: 0.5

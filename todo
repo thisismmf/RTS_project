@@ -1,0 +1,89 @@
+SETUP
+- Task Graph and Nodes                                                            DONE
+- Resource access allocation (to graphs, and then to nodes), consequent ceiling   DONE
+- Node execution times                                                            DONE
+- Dedicate CPUs to heavy tasks                                                    DONE
+- Assign light tasks to CPUs based on worst-fit decreasing                        DONE
+
+
+SCHEDULING
+- Output log files
+- Implement priority ceiling protocol for light tasks
+- Implement the busy waiting
+
+
+
+EVENT HANDLING (light CPUs)
+- task arrived (t, "task arrived", task)
+    add the next task arrival and deadline
+    if relative deadline < cpu ceiling:
+      cpu.change_current_task(t, this task)
+        if current task is not None:
+          if not current task.busy waiting:
+            current task.remained -= t - start running
+        current task = task
+        start running = t
+        if task.busy wait:
+          if the corresponding resource is now available:
+            task.busy wait = False
+        add task.resume events
+
+      add a check event for completion at t + task execution time
+
+- deadline arrived (t, task)
+    if task.remained > 0: scheduling fails
+
+- system ceiling changed (t, "cpu ceiling changed", cpu)
+    iterate over all tasks in this CPU
+    if deadline < cpu ceiling and not in active list:
+      add to active list
+    if task on active list with least deadline has less deadline than the current task:
+      cpu.change_current_task(that task)
+
+- node wanted to take a local resource (t, node, expected remaining time)
+    if cpu.current task != node.task, ignore
+    update the remaining time (remember to update the start running as well). if mismatched with the expected, ignore
+    "ignore":
+      add the event to the task's resume events
+    lock the resource. if not possible, this is considered a bug!
+    raise the CPU ceiling level
+    
+- node released a local resource (t, node, expected remaining time)
+    if mismatched: ignore (just like taking a resource)
+    unlock the resource
+    drop the CPU ceiling level
+    add a system ceiling change event
+
+- node wanted to take a global resource (t, node, expected remaining time, resource)
+    if mismatched: ignore
+    if the resource is not locked, lock it
+    otherwise, change the cpu.current task.busy wait to True, update the remained, set start running to t
+    add this task to the list of busy waiters of that resource
+
+- node released a global resource (t, node, expected remaining time, resource)
+    if mismatched: ignore
+    unlock the resource
+    select the first element of the busy-waiting queue that is currently running on a CPU
+    (assuming for now that it is a light task)
+    task.busy waiting = False
+    if no such task exists (ie, if no task waits for that resource or no waiting tasks were running on a CPU), do nothing.
+
+
+
+- node finished
+- task finished
+- time over
+- check
+
+MAIN
+generate tasks, resources, num of CPUs
+assign resources to tasks and nodes
+devote CPUs to tasks
+implement the scheduling infrastructure
+add the first arrival events, and the FINISH event
+the scheduling while loop
+
+
+to explain
+  fixed rand sum
+  cpu dedication: worst fit
