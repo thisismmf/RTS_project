@@ -1,7 +1,9 @@
-from models import Node, TaskGraph, Resource, CPU
+from models import TaskGraph, Resource, CPU, Event
+from typing import List
 import random
 import yaml
 import math
+import sys
 
 with open("hyper-parameters.yaml", "r") as conf_file:
     config = yaml.safe_load(conf_file)
@@ -19,7 +21,7 @@ resources = [Resource() for _ in range(n_resources)]
 total_utilization = sum([task.utilization for task in tasks])
 u_norm = config["cpu"]["utilization_norm"]
 n_cpu = math.ceil(total_utilization / u_norm) # IMPORTANT: CPUs are numbered from 0 to n_cpu - 1
-cpus = [CPU(id) for id in range(n_cpu)]
+cpus : List[CPU] = [CPU(id) for id in range(n_cpu)]
 
 last_used_cpu_num = -1
 for task in tasks: # assigning dedicated CPUs to heavy tasks (ie, tasks with utilization > 1)
@@ -31,22 +33,25 @@ for task in tasks: # assigning dedicated CPUs to heavy tasks (ie, tasks with uti
         last_used_cpu_num += cpus_granted
 
 if last_used_cpu_num >= n_cpu:
-    #TODO: NOT SCHEDULABLE
-    # reason: not enough CPUs to acommodate heavy tasks
-    ...
+    print("scheduing failed: not enough CPUs to acommodate heavy tasks")
+    sys.exit(0)
 # CPUs with numbers from last_used_cpu_num + 1 to n_cpu - 1 will be used for light tasks
 cpu_utilizations = [0.0 for _ in range(n_cpu - last_used_cpu_num - 1)]
 for task in tasks:
     if task.utilization <= 1: # we'll put this task on a CPU which has the lowest utilization
         least_utilized_cpu_idx = cpu_utilizations.index(min(cpu_utilizations))  # between all CPUs that are not already dedicated to heavy tasks.
         if cpu_utilizations[least_utilized_cpu_idx] + task.utilization > 1:
-            # TODO: NOT SCHEDULABLE
-            # reason: not enough CPUs to acommodate light tasks
-            ...
+            print("scheduing failed: not enough CPUs to acommodate light tasks")
+            sys.exit(0)
         task.assign_cpu(least_utilized_cpu_idx + last_used_cpu_num + 1)
         cpus[least_utilized_cpu_idx + last_used_cpu_num + 1].add_task(task)
         cpu_utilizations[least_utilized_cpu_idx] += task.utilization
 
+# Add local resources to the corresponding lists in CPUs
+for resource in resources:
+    cpu_id = resource.using_cpu
+    if cpu_id is not None:
+        cpus[cpu_id].add_local_resource(resource)
 
 # Make tasks use resources
 access_count_options = config["resource"]["total_access_options"]
@@ -61,38 +66,21 @@ for resource in resources:
 for task in tasks:
     task.assign_resource_use_to_nodes()
 
-scheduling_finish_time = math.lcm(*[task.rel_deadine for task in tasks])
+scheduling_finish_time = math.lcm(*[task.rel_deadline for task in tasks])
 
 # Main scheduling logic
 
-events = []
-
-def handle_event(event):
-    global events
-    t = event[0]
-    event_type = event[1]
-    if event_type == "task arrived":
-        task = event[2]
-        events.append((t + task.rel_deadline, "task arrived", task))
-        if task.remained_execution > 0:
-            # TODO : SCHEDULING FAILS HERE
-            # reason: task missed its deadline
-            ...
-        task_cpu = task.assigned_cpus[0]
-        if task.rel_deadline < task_cpu.ceil:
-            task_cpu.change_current_task(t, task)
-        events.append((t + task.wcet, "completion check", task))
-        return
-    if event_type == "cpu ceiling changed":
-        cpu = event[2]
-        for task in cpu.tasks:
-            if task.rel_deadline < cpu.ceil:
-                if task not in cpu.actives:
-                    cpu.actives.append(task)
-        
 
 
-while events:
+scheduling_failed = False
+
+while events and not scheduling_failed:
     next_event = min(events)
+    next_event.act()
     events.remove(next_event)
-    handle_event(next_event)
+    
+
+if scheduling_failed:
+    print("FAILED")
+else:
+    print("SUCCEEDED")

@@ -1,0 +1,240 @@
+event priority
+    deadline arrived
+    task locked resource
+    task released resource
+    task finished
+    task arrived
+
+
+subtask:
+    CPU
+    resource to request when running
+
+task:
+    CPU
+    passed
+    last update (of passed)
+    events
+
+
+    update_passed(current time):
+        assert self.CPU.busy waiting is false
+        assert self.CPU.current == self
+        passed += current time - last update
+        last update = current time
+        assert passed <= self.total duration
+    
+    ---
+    dependent subtasks
+    ready subtasks
+    running subtasks
+    busy waiting subtasks
+    suspends
+
+CPU:
+    ready tasks
+    active tasks
+    current (which is top(active tasks))
+    ceil
+    local resources
+
+    set_current_task_from_ready(t):
+        current task = pop(ready)
+        active tasks.add(current task)
+        current task.last update = t
+        add check for finish(t + current task.total, current task)
+        next_lock, resource = current task.get_next_lock()
+        next resource lock event (t + next_lock, current task, resource, next_lock)
+
+    check_for_entrance(t):
+        if busy waiting: return
+        current task.update_passed(t)
+        candid = top(ready)
+        if P(candid) > max(ceil, P(current))
+            set_current_task_from_ready(t)
+    current_is_finished(t):
+        remove current task from active
+        candid = top(ready)
+        if P(candid) > max(P(top(active)), ceil): # or just `ceil`if `active` is empty (in which case should be 0)
+            set_current_task_from_ready(t)
+            assert this line never gets executed!
+        else: # resume the top of the active list
+            current task = top(active)
+            current task.last update = t
+            add check for finish(t + current task.total - current task.passed, current task)
+            next_lock, resource_to_lock = current task.get_next_lock()
+            next_release, resource_to_release = current task.get_next_release()
+            if 0 < next_lock < next_release:
+                next resource lock event (t + next_lock, current task, resource_to_lock, current task.passed + next_lock)
+            else:
+                next resource release event (t + next_release, current task, resource_to_release, current task.passed + next_release)
+    update_ceiling:
+        ceil = 0
+        for resource in local resources:
+            if resource.user is not None:
+                ceil = max(ceil, resource.ceil)
+
+
+
+
+
+task arrived (t, task)
+    task.passed = 0
+    next arrival event (t + T, task)
+    next deadline event (t + D, task)
+    add task to ready of task.CPU
+    task.CPU.check_for_entrance(t)
+
+deadline arrived (t, task)
+    if task == task.CPU.current:
+        task.update_passed(t)
+    if task.total exec time > task.passed:
+        SCHEDULING IS FAILED
+
+task tried to lock resource (t, task, resource, expected passed time)
+    if task.cpu.current != task: return
+    task.update_passed(t)
+    if task.passed != expected passed time: return
+
+    if resource.local:
+        assert resource is available
+        next_release, resource_to_release = task.get_next_release()
+        assert resource == resource_to_release
+        add next release event (t + next_release, task, resource, task.passed + next_release)
+
+        assert resource.user is None
+        resource.user = task
+        task.CPU.update_ceiling()
+    else:
+        if resource.user is None:
+            resource.user = task
+            next_release, resource_to_release = task.get_next_release()
+            assert resource == resource_to_release
+            add next release event (t + next_release, task, resource, task.passed + next_release)
+        else:
+            resource.busy waiters.add(task)
+            task.cpu.busy waiting = true
+
+task released resource(t, task, resource, expected passed time)
+    if task.cpu.current != task: return
+    task.update_passed(t)
+    if task.passed != expected passed time: return
+    next_lock, resource = task.get_next_lock()
+    next resource lock event (t + next_lock, task, resource, task.passed + next_lock)
+
+    if resource.local:
+        resource.user = None
+        task.CPU.update_ceiling()
+        task.CPU.check_for_entrance(t)
+    else:
+        add global resource released event (t, resource):
+
+check for finish (t, task)
+    if task.cpu.current != task: return
+    if task.cpu.busy waiting: return
+    task.update_passed(t)
+    if task.passed > 0: return
+
+    task.CPU.current_is_finished(t)
+
+
+global resource was released (t, resource)
+    next user = resource.busy waitars.pop()
+    resource.user = next user
+    if next user.CPU.is_light():
+        assert next user.CPU.current task == next user
+        next user.last_update = t
+        next_release, resource_to_release = next user.get_next_release()
+        assert resource == resource_to_release
+        add next release event (t + next_release, next user, resource, next user.passed + next_release)
+        add check for finish (t + next user.duration - next user.passed, next user)
+        next user.CPU.busy waiting = false
+        next user.CPU.check_for_entrance()
+    else:
+        # next user should now be 'running'
+        next user.last_update = t
+        move next user from next user.task.busy waiting to next user.task.running
+        next_release = subtask.get_next_release()
+        add global resource release event (t + next_release, resource)
+        add check for completion event (t + next user.duration - next user.passed, next user)
+        # the first suspender in next user's cluster should be ready and, once dispatched, make a request for this resource
+        top suspender = next user.task.suspends[resource].pop()
+        next user.task.ready.add(top suspender)
+        top suspender.resource to request when running = resource
+
+--------------------------------------------------------------------------------------------------------
+
+
+period started (t, task)
+    for source in task graphs:
+        if task.CPUs has free CPU:
+            subtask.CPU = CPU
+            CPU.task = source
+            add subtask start event (t, source)
+
+subtask started (t, subtask)
+    add subtask completion check event (t, subtask + duration)
+    subtask.passed = 0
+    subtask.last update = t
+    next_lock, resource = subtask.get_next_lock()
+    add subtask lock event (t + next_lock, subtask, resource)
+
+subtask resumed (t, subtask)
+    add subtask completion check event (t, subtask + duration)
+    subtask.last update = t
+    if subtask.resource to request on resume is not None:
+        add try to lock resource request (t, subtask, subtask.resource to request on resume)
+
+
+check if subtask completed (t, subtask)
+    if subtask not in subtask.task.running: return
+    subtask.update_passed(t)
+    if subtask.passed < subtask.duration:
+        add subtask completion event (t + subtask.duration - subtask.passed, subtask)
+        return
+    subtask.CPU.task = None
+    subtask.CPU = None
+    
+    for node in subtask.task.dependent:
+        if node.all_prerequisites_met():
+            remove node from task.dependent
+            add node to task.ready
+    while free cpu in task.CPU and not task.ready.empty():
+        new runner = task.ready.pop()
+        task.running.add(new runner)
+        new runner.CPU = free cpu
+        free cpu.task = new runner
+        if new runner.passed == 0:
+            add subtask start event (t, new runner)
+        else:
+            add subtask resume event (t, new runner)
+    
+
+subtask tried to lock a resource (t, subtask, resource)
+    subtask.update_passed(t)
+    if resource.user is None:
+        resource.user = subtask
+        next_release = subtask.get_next_release()
+        add global resource release event (t + next_release, resource)
+    else:
+        if another subtask in the same task was busy waiting on resource:
+            task.suspends[resource].add(subtask)
+            remove subtask from task.running
+            if task.ready is not empty: 
+                new runner = task.ready.pop()
+                new runner.CPU = subtask.CPU
+                subtask.CPU.task = new runner
+                task.running.add(new runner)
+                if new runner.passed == 0:
+                    add subtask start event (t, new runner)
+                else:
+                    add subtask resume event (t, new runner)
+
+            subtask.CPU = None
+        else:
+            remove subtask from task.running
+            add subtask to task.busy waiting
+            resource.busy waiters.add(subtask)
+
+
+global resource was released (t, resource)
