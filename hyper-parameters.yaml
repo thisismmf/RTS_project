@@ -1,23 +1,16 @@
 graph:
-  edge_probability: 0.1
+  edge_probability: 0.8
   min_mid_nodes: 20
   max_mid_nodes: 50
-  number_of_tasks: 4
-
-
+  number_of_tasks: 8
 node:
   min_exec_time: 30
   max_exec_time: 600
-  critical_section_portion: 0.60
-
+  critical_section_portion: 0.5
 resource:
-  min_number: 2
-  max_number: 8
+  min_number: 4
+  max_number: 4
   total_access_options:
-    - 5
-    - 15
-    - 30
-    - 50
-
+  - 30
 cpu:
   utilization_norm: 0.5

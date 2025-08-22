@@ -2,16 +2,15 @@ import math
 import random
 import yaml
 import sys
+import numpy as np
 
 from enum import Enum
 from typing import Callable, List, Dict
-from copy import copy
 
 
 with open("hyper-parameters.yaml", "r") as conf_file:
     config = yaml.safe_load(conf_file)
-CEIL_INF = config["node"]["max_exec_time"] * config["graph"]["max_mid_nodes"] + 5
-
+CEIL_INF = config["node"]["max_exec_time"] * config["graph"]["max_mid_nodes"] * 100000
 
 ### CLASSES ###
 ###############
@@ -24,6 +23,7 @@ class Node:
             )
         else:
             self.exec_time = exec_time
+        self.exec_time *= 1000
         self.out_nodes : List[Node] = []
         self.in_nodes : List[Node] = []
         self.max_path_to_me = 0
@@ -57,22 +57,24 @@ class Node:
         The algorithm used to do so is the famous "fixed rand-sum" method.
         The exact value of this portion is a hyperparameter and can be found in the associated confing file.
         """
-        cirtical_section_portion = config["node"]["critical_section_portion"]
+        critical_section_portion = config["node"]["critical_section_portion"]
         n_critical_section = sum(self._resource_use_count.values())
         n_normal_section = n_critical_section + 1
-        n_total_section = n_critical_section + n_normal_section
-        critical_section_boundaries = [
-            random.random() * self.exec_time * cirtical_section_portion for _ in range(n_critical_section - 1)
-        ]
-        critical_section_boundaries.sort()
+        critical_sections_duration = int(self.exec_time * critical_section_portion)
+        normal_sections_duration = self.exec_time - critical_sections_duration
+        if n_critical_section > 0:
+            critical_section_boundaries = list(np.random.choice(np.arange(1, critical_sections_duration), n_critical_section - 1, replace=False))
+            critical_section_boundaries.sort()
+        else:
+            critical_section_boundaries = []
         critical_section_boundaries.insert(0, 0)
-        critical_section_boundaries.append(self.exec_time * cirtical_section_portion)
-        normal_section_boundaries = [
-            random.random() * self.exec_time * (1 -  cirtical_section_portion) for _ in range(n_normal_section - 1)
-        ]
+        critical_section_boundaries.append(critical_sections_duration)
+        normal_section_boundaries = list(
+            np.random.choice(np.arange(1, normal_sections_duration), n_normal_section - 1, replace=False)
+        )
         normal_section_boundaries.sort()
         normal_section_boundaries.insert(0, 0)
-        normal_section_boundaries.append(self.exec_time * (1 - cirtical_section_portion))
+        normal_section_boundaries.append(normal_sections_duration)
         requests = []
         for resource in self._resource_use_count:
             requests += [resource] * self._resource_use_count[resource]
@@ -212,7 +214,7 @@ class TaskGraph:
         assert self.passed_time_last_update <= t
         self.passed_time += t - self.passed_time_last_update
         self.passed_time_last_update = t
-        assert self.passed_time <= self.exec_time
+        assert self.passed_time <= self.exec_time, f"task:{self}, passed: {self.passed_time}, exec: {self.exec_time}"
     
     def get_next_lock(self):
         """
@@ -309,9 +311,7 @@ class Resource:
     def pop_busy_waiter(self):
         if self.busy_waiters == []:
             return None
-        first_in_queue = self.busy_waiters[0]
-        del self.busy_waiters[0]
-        return first_in_queue
+        return self.busy_waiters.pop(0)
 
 class CPU:
     def __init__(self, id):
@@ -325,7 +325,8 @@ class CPU:
         self.current_task : TaskGraph | None
         self.local_resources : List[Resource] = []
         self.busy_waiting = False
-        self.current_subtask : Node | None
+        self.current_task : TaskGraph | None = None
+        self.current_subtask : Node | None = None
     
     def add_task(self, task : TaskGraph):
         self.tasks.append(task)
@@ -342,6 +343,7 @@ class CPU:
         assert self.current_task not in self.active_tasks
         self.active_tasks.append(self.current_task)
         self.current_task.passed_time_last_update = t
+        assert self.current_task.passed_time == 0
         finish_event = Event(
             t + self.current_task.exec_time,
             EventType.TASK_FINISHED,
@@ -378,16 +380,16 @@ class CPU:
     def current_task_is_finished(self, t):
         assert self.current_task is not None
         assert self.current_task in self.active_tasks
+        assert self.current_task not in self.ready_tasks
         self.active_tasks.remove(self.current_task)
 
-        used_top_ready = False
         if self.ready_tasks != []:
             candid = min(self.ready_tasks)
             if candid.rel_deadline < self.ceil:
                 if self.active_tasks == [] or candid.rel_deadline < min(self.active_tasks).rel_deadline:
                     self.set_current_task_from_ready(t)
-                    used_top_ready = True
-        if not used_top_ready: # resume the top of the active list
+                    return
+        if self.active_tasks != [] : # resume the top of the active list
             self.current_task = min(self.active_tasks)
             self.current_task.passed_time_last_update = t
             finish_event = Event(
@@ -426,6 +428,9 @@ class CPU:
                         },
                     )
                     events.append(resource_release_event)
+        else:
+            assert self.ceil == CEIL_INF
+            self.current_task = None
     
     def update_ceiling(self):
         self.ceil = CEIL_INF
@@ -436,15 +441,17 @@ class CPU:
 class EventType(Enum):
     DEADLINE_ARRIVED = 0
     TASK_TRIED_TO_LOCK_RESOURCE = 1
-    TASK_RELEASED_RESOURCE = 2
-    GLOBAL_RESOURCE_RELEASED = 3
-    TASK_FINISHED = 4
-    TASK_ARRIVED = 5
-    SUBTASK_STARTED = 6
-    SUBTASK_COMPLETED = 7
-    SUBTASK_RESUMED = 8
-    SUBTASK_TRIED_TO_LOCK_RESOURCE = 9
-    PERIOD_STARTED = 10
+    SUBTASK_TRIED_TO_LOCK_RESOURCE = 2
+    TASK_RELEASED_RESOURCE = 3
+    GLOBAL_RESOURCE_RELEASED = 4
+    TASK_FINISHED = 5
+    CHECK_SUBTASK_COMPLETED = 6
+    TASK_ARRIVED = 7
+    PERIOD_STARTED = 8
+    SUBTASK_STARTED = 9
+    SUBTASK_RESUMED = 10
+    
+
 
 class Event:
     def __init__(self, t : int, event_type : EventType, handler : Callable, params : dict):
@@ -457,7 +464,7 @@ class Event:
         self.handler(self.time, **self.params)
     
     def __lt__(self, other):
-        return self.time < other.time or (self.time == other.time and self.type < other.type)
+        return self.time < other.time or (self.time == other.time and self.type.value < other.type.value)
 
 
 ### INITIALIZATIONS ###
@@ -484,8 +491,8 @@ for task in tasks: # assigning dedicated CPUs to heavy tasks (ie, tasks with uti
     if task.utilization > 1:
         cpus_granted = task.dedicated_cpus_required
         if last_used_cpu_num + cpus_granted - 1 >= n_cpu:
-            print("scheduing failed: not enough CPUs to acommodate heavy tasks")
-            sys.exit(0)
+            # print("scheduing failed: not enough CPUs to acommodate heavy tasks")
+            sys.exit(-1)
         for cpu_num in range(last_used_cpu_num, last_used_cpu_num + cpus_granted):
             task.assign_cpu(cpu_num)
             cpus[cpu_num].add_task(task)
@@ -495,10 +502,12 @@ for task in tasks: # assigning dedicated CPUs to heavy tasks (ie, tasks with uti
 cpu_utilizations = [0.0 for _ in range(n_cpu - last_used_cpu_num - 1)]
 for task in tasks:
     if task.utilization <= 1: # we'll put this task on a CPU which has the lowest utilization
+        if cpu_utilizations == []:
+            sys.exit(-1)
         least_utilized_cpu_idx = cpu_utilizations.index(min(cpu_utilizations))  # between all CPUs that are not already dedicated to heavy tasks.
         if cpu_utilizations[least_utilized_cpu_idx] + task.utilization > 1:
-            print("scheduing failed: not enough CPUs to acommodate light tasks")
-            sys.exit(0)
+            # print("scheduing failed: not enough CPUs to acommodate light tasks")
+            sys.exit(-1)
         task.assign_cpu(least_utilized_cpu_idx + last_used_cpu_num + 1)
         cpus[least_utilized_cpu_idx + last_used_cpu_num + 1].add_task(task)
         cpu_utilizations[least_utilized_cpu_idx] += task.utilization
@@ -635,9 +644,10 @@ def check_for_finish(t : int, task : TaskGraph):
     if cpus[cpu_id].current_task != task: return
     if cpus[cpu_id].busy_waiting: return
     task.update_passed_time(t)
-    if task.passed_time > 0: return
+    if task.passed_time < task.exec_time:
+        return
 
-    cpus[cpu_id].current_is_finished(t)
+    cpus[cpu_id].current_task_is_finished(t)
 
 
 
@@ -674,9 +684,8 @@ def global_resource_released(t, resource : Resource):
         assert cpus[cpu_id].busy_waiting
         cpus[cpu_id].busy_waiting = False
         cpus[cpu_id].check_for_entrance(t)
-    else:
+    elif isinstance(next_user, Node):
         # next user should now be 'running'
-        assert isinstance(next_user, Node)
         assert not next_user.task_graph.is_light()
         next_user.passed_time_last_update = t
         assert next_user == next_user.task_graph.bw_subtasks[resource]
@@ -693,7 +702,7 @@ def global_resource_released(t, resource : Resource):
         events.append(global_release_event)
         completion_event = Event(
             t + next_user.exec_time - next_user.passed_time,
-            EventType.SUBTASK_COMPLETED,
+            EventType.CHECK_SUBTASK_COMPLETED,
             check_if_subtask_completed,
             {"subtask" : next_user},
         )
@@ -704,7 +713,20 @@ def global_resource_released(t, resource : Resource):
             top_suspender.resume_resource = resource
 
 def period_started(t : int, task : TaskGraph):
+    global scheduling_failed
     assert not task.is_light()
+    if t > 0:
+        for subtask in task.mid_node_list:
+            if subtask.passed_time < subtask.exec_time:
+                scheduling_failed = True
+
+    next_period_start = Event(
+        t + task.rel_deadline,
+        EventType.PERIOD_STARTED,
+        period_started,
+        {"task" : task},
+    )
+    events.append(next_period_start)
     for cpu_id in task.assigned_cpus:
         cpus[cpu_id].current_subtask = None
     task.pend_subtasks = []
@@ -721,11 +743,13 @@ def period_started(t : int, task : TaskGraph):
             task.try_to_accomodate_node(node, t)
         else:
             task.pend_subtasks.append(node)
+    
 
 def subtask_started(t : int, subtask : Node):
+    assert subtask.passed_time == 0
     completion_event = Event(
         t + subtask.exec_time,
-        EventType.SUBTASK_COMPLETED,
+        EventType.CHECK_SUBTASK_COMPLETED,
         check_if_subtask_completed,
         {"subtask" : subtask},
     )
@@ -748,8 +772,8 @@ def subtask_started(t : int, subtask : Node):
 
 def subtask_resumed(t : int, subtask : Node):
     completion_event = Event(
-        t + subtask.exec_time,
-        EventType.SUBTASK_COMPLETED,
+        t + subtask.exec_time - subtask.passed_time,
+        EventType.CHECK_SUBTASK_COMPLETED,
         check_if_subtask_completed,
         {"subtask" : subtask},
     )
@@ -775,7 +799,7 @@ def check_if_subtask_completed(t : int, subtask : Node):
     if subtask.passed_time < subtask.exec_time:
         completion_event = Event(
             t + subtask.exec_time - subtask.passed_time,
-            EventType.SUBTASK_COMPLETED,
+            EventType.CHECK_SUBTASK_COMPLETED,
             check_if_subtask_completed,
             {"subtask" : subtask},
         )
@@ -793,7 +817,7 @@ def check_if_subtask_completed(t : int, subtask : Node):
     for no_more_pend in no_more_pends:
         subtask.task_graph.pend_subtasks.remove(no_more_pend)
         subtask.task_graph.ready_subtasks.append(no_more_pend)
-    ready_copy = copy(subtask.task_graph.ready_subtasks)
+    ready_copy = [element for element in subtask.task_graph.ready_subtasks]
     for ready_node in ready_copy:
         subtask.task_graph.try_to_accomodate_node(ready_node, t)
 
@@ -822,7 +846,7 @@ def subtask_tried_to_lock_a_resource(t : int, subtask : Node, resource : Resourc
             cpus[subtask.running_cpu].current_subtask = None
             subtask.running_cpu = None
     
-            ready_copy = copy(subtask.task_graph.ready_subtasks)
+            ready_copy = [element for element in subtask.task_graph.ready_subtasks]
             for ready_node in ready_copy:
                 subtask.task_graph.try_to_accomodate_node(ready_node, t)
         else:
@@ -835,23 +859,38 @@ def subtask_tried_to_lock_a_resource(t : int, subtask : Node, resource : Resourc
 #################
 
 
-
 scheduling_failed = False
+for task in tasks:
+    if task.is_light():
+        events.append(Event(
+            0,
+            EventType.TASK_ARRIVED,
+            task_arrived,
+            {"task" : task},
+        ))
+    else:
+        events.append(Event(
+            0,
+            EventType.PERIOD_STARTED,
+            period_started,
+            {"task" : task},
+        ))
 
 
-
-while events and not scheduling_failed:
-    next_event = min(events)
-    next_event.act()
+time = 0
+next_event = min(events)
+while events and not scheduling_failed and next_event.time <= scheduling_finish_time:
+    #print(f"{next_event.time}:\t{next_event.type}", next_event.params)
     events.remove(next_event)
+    next_event.act()
+    time = next_event.time
+    if events:
+        next_event = min(events)
     
 
 if scheduling_failed:
-    print("FAILED")
+    #print("deadline missed")
+    sys.exit(-1)
 else:
-    print("SUCCEEDED")
-
-# TODO:
-# Check for sorting of tasks
-# Make the timing in milliseconds
-# Check: when is the key removed in task.bw?
+    #print("SUCCEEDED - time =", time, " /", scheduling_finish_time)
+    sys.exit(0)

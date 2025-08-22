@@ -180,7 +180,7 @@ subtask started (t, subtask)
     add subtask lock event (t + next_lock, subtask, resource)
 
 subtask resumed (t, subtask)
-    add subtask completion check event (t, subtask + duration)
+    add subtask completion check event (t, subtask + duration - passsed)
     subtask.last update = t
     if subtask.resource to request on resume is not None:
         add try to lock resource request (t, subtask, subtask.resource to request on resume)

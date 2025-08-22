@@ -1,86 +1,65 @@
-from models import TaskGraph, Resource, CPU, Event
-from typing import List
-import random
 import yaml
-import math
-import sys
+import subprocess
 
-with open("hyper-parameters.yaml", "r") as conf_file:
+
+def evaluate_config(runs=20):
+    for i in range(runs):
+        result = subprocess.run(["python3", "simulation.py"])
+        count_success = 0
+        
+        if result.returncode == 0:
+            count_success += 1
+
+    print(f"Out of {runs} runs, exit code 0 occurred {count_success} times.")
+
+
+with open("defaults.yaml", "r") as conf_file:
     config = yaml.safe_load(conf_file)
 
+# Phase A
+for u_norm in [0.1, 0.3, 0.5, 0.7, 1]:
+    print(f"U_NORM = {u_norm}")
+    config["cpu"]["utilization_norm"] = u_norm
+    with open("hyper-parameters.yaml", "w") as f:
+        yaml.safe_dump(config, f, sort_keys=False)
+    evaluate_config()
 
-# Generate tasks and resources
-n_tasks = config["graph"]["number_of_tasks"]
-tasks = [TaskGraph() for _ in range(n_tasks)]
+config["cpu"]["utilization_norm"] = 0.5
 
-n_resources = random.randint(config["resource"]["min_number"], config["resource"]["max_number"])
-resources = [Resource() for _ in range(n_resources)]
+# Phase B
+for num_req in [10, 30, 50]:
+    print(f"Number of requests per resource = {num_req}")
+    config["resource"]["total_access_options"] = [num_req]
+    with open("hyper-parameters.yaml", "w") as f:
+        yaml.safe_dump(config, f, sort_keys=False)
+    evaluate_config()
 
+config["resource"]["total_access_options"] = [30]
 
-# Compute number of CPUs, dedicate them to tasks
-total_utilization = sum([task.utilization for task in tasks])
-u_norm = config["cpu"]["utilization_norm"]
-n_cpu = math.ceil(total_utilization / u_norm) # IMPORTANT: CPUs are numbered from 0 to n_cpu - 1
-cpus : List[CPU] = [CPU(id) for id in range(n_cpu)]
+# Phase C
+for num_resource in [2, 4, 6, 8]:
+    print(f"Number of resources = {num_resource}")
+    config["resource"]["min_number"] = config["resource"]["max_number"] = num_resource
+    with open("hyper-parameters.yaml", "w") as f:
+        yaml.safe_dump(config, f, sort_keys=False)
+    evaluate_config()
 
-last_used_cpu_num = -1
-for task in tasks: # assigning dedicated CPUs to heavy tasks (ie, tasks with utilization > 1)
-    if task.utilization > 1:
-        cpus_granted = task.dedicated_cpus_required
-        for cpu_num in range(last_used_cpu_num, last_used_cpu_num + cpus_granted):
-            task.assign_cpu(cpu_num)
-            cpus[cpu_num].add_task(task)
-        last_used_cpu_num += cpus_granted
+config["resource"]["min_number"] = config["resource"]["max_number"] = 4
 
-if last_used_cpu_num >= n_cpu:
-    print("scheduing failed: not enough CPUs to acommodate heavy tasks")
-    sys.exit(0)
-# CPUs with numbers from last_used_cpu_num + 1 to n_cpu - 1 will be used for light tasks
-cpu_utilizations = [0.0 for _ in range(n_cpu - last_used_cpu_num - 1)]
-for task in tasks:
-    if task.utilization <= 1: # we'll put this task on a CPU which has the lowest utilization
-        least_utilized_cpu_idx = cpu_utilizations.index(min(cpu_utilizations))  # between all CPUs that are not already dedicated to heavy tasks.
-        if cpu_utilizations[least_utilized_cpu_idx] + task.utilization > 1:
-            print("scheduing failed: not enough CPUs to acommodate light tasks")
-            sys.exit(0)
-        task.assign_cpu(least_utilized_cpu_idx + last_used_cpu_num + 1)
-        cpus[least_utilized_cpu_idx + last_used_cpu_num + 1].add_task(task)
-        cpu_utilizations[least_utilized_cpu_idx] += task.utilization
+# Phase D
+for csp in [0.1, 0.3, 0.5, 0.7, 0.9]:
+    print(f"CSP = {csp}")
+    config["node"]["critical_section_portion"] = csp
+    with open("hyper-parameters.yaml", "w") as f:
+        yaml.safe_dump(config, f, sort_keys=False)
+    evaluate_config()
 
-# Add local resources to the corresponding lists in CPUs
-for resource in resources:
-    cpu_id = resource.using_cpu
-    if cpu_id is not None:
-        cpus[cpu_id].add_local_resource(resource)
+config["node"]["critical_section_portion"] = 0.5
 
-# Make tasks use resources
-access_count_options = config["resource"]["total_access_options"]
-for resource in resources:
-    total_access = random.choice(access_count_options)
-    for access in range(total_access):
-        accessing_task = random.choice(tasks)
-        accessing_task.use_resource_another_time(resource)
-
-
-# Distribute resource usage of each task between its nodes
-for task in tasks:
-    task.assign_resource_use_to_nodes()
-
-scheduling_finish_time = math.lcm(*[task.rel_deadline for task in tasks])
-
-# Main scheduling logic
-
-
-
-scheduling_failed = False
-
-while events and not scheduling_failed:
-    next_event = min(events)
-    next_event.act()
-    events.remove(next_event)
-    
-
-if scheduling_failed:
-    print("FAILED")
-else:
-    print("SUCCEEDED")
+# Phase E
+for num_task in [4, 6, 8]:
+    print(f"Number of tasks: {num_task}")
+    config["graph"]["number_of_tasks"] = num_task
+    with open("hyper-parameters.yaml", "w") as f:
+        yaml.safe_dump(config, f, sort_keys=False)
+    evaluate_config()

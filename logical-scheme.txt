@@ -1,0 +1,56 @@
+LIGHT TASKS
+Task Arrived:
+    add to ready
+    check_for_entrance
+
+Deadline Arrived:
+    If task is remained: Simulation is failed
+
+Task Locked Resource:
+    Calculate the new system ceiling
+
+Task Released Resource:
+    Calculate the new system ceiling
+    If lower than the previous one:
+        check_for_entrance
+
+Task Waited On Global Resource:
+    If available: assign the resource
+    Else: CPU enters busy waiting
+       
+Task Finished:
+    Remove task from active
+    If P(top(ready)) > P(top(active)), SC:
+        execute top(ready), remove it from ready, add to actives
+    else:
+        execute top(active)
+
+check_for_entrance:
+    If P(top(ready)) > sc and P(current):
+        preempt the current task, execute 
+        top(ready), remove it from ready, add to actives
+
+HEAVY TASKS
+
+Statuses: Dependencies not satisfied, ready, running, busy waiting, suspended
+
+Period started
+    Allocate ready subtasks
+
+Deadline arrived
+    If remained, the simulation fails
+
+Subtask completed
+    Update the dependent and ready lists, allocate the CPU to a ready subtask
+
+Task Wants A Resource
+    If resource is free: allocate
+    Elif another subtask is busy waiting:
+        Add to the suspend queue
+        Try to allocate this CPU to another ready subtask
+    Else: enter busy waiting
+
+Global Resource Is Released
+    pop from the busy waiting queue
+    resource is given to that subtask
+    the head of that cluster's SQ for that resource becomes ready. Once it's dispatched, it will send a request for that resource, causing it to access the resource or busy waiting
